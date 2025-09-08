@@ -66,7 +66,7 @@ def main():
     # main_engine.add_app(SpreadTradingApp)
     # main_engine.add_app(AlgoTradingApp)
     # main_engine.add_app(OptionMasterApp)
-    # main_engine.add_app(PortfolioStrategyApp)
+    # main_engine.add_app(PortfolioStrategyApp)d
     # main_engine.add_app(ScriptTraderApp)
     # main_engine.add_app(ChartWizardApp)
     # main_engine.add_app(RpcServiceApp)

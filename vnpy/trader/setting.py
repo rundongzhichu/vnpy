@@ -24,9 +24,16 @@ SETTINGS: dict = {
     "email.sender": "",
     "email.receiver": "",
 
-    "datafeed.name": "",
-    "datafeed.username": "",
-    "datafeed.password": "",
+    # rqdata
+    # "datafeed.name": "rqdata",
+    # "datafeed.username": "license",
+    # "datafeed.password": "GpYr7c0DJbnD3yBZ7XEX9CihZI0zYLW07hVHKfZP1Uvz-M2UKPdVyS10IQ-0_b8PvrKShMwTfbyLLb1K0JK1aRR84EDBB-ezyCmH-h9eQGSvmpuyRGmK8iuah-zt-U_ZmKcDCbhdMw18mLsis-CzfTLXT99SNaG0Ars8Sa_e9r0=VisWwnAEqprczOQhvgNhwLFZ7Kp2a1fZELOmsBNVy1Pf0gES6fTGJBEi2bHXVk3RQsQQ-ghuFI8Cp7M2XxcKbx5LRRYlH5shOWosjRkrmLhLlKPM3PP4eWbmOBz_IkEh83lcZc5H2EaiYKFmeEtDe9fDjycT9ACRhyHn33WPC0M=",
+
+    # 天勤
+    "datafeed.name": "tqsdk",
+    "datafeed.username": "shoucai",
+    "datafeed.password": "Wssc1314520",
+
 
     "database.timezone": get_localzone_name(),
     "database.name": "sqlite",
