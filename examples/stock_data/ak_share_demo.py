@@ -32,7 +32,6 @@ class MainForceAnalyzer:
         self.calculate_order_size()
         self.classify_orders()
         self.identify_main_force_patterns()
-        self.calculate_main_force_indicators()
 
     def calculate_order_size(self):
         """计算每笔成交的订单规模"""
@@ -60,11 +59,11 @@ class MainForceAnalyzer:
         self.df['NEUTRAL_TRADING_VOLUME'] = np.where(neutral_condition, self.df['AMOUNT_WAN'], 0)
 
         # 计算10笔交易的价格变化
-        self.df['PRICE_CHANGE_10_trade'] = self.df['PRICE'].pct_change(periods=10) * 100
+        self.df['PRICE_CHANGE_10_TRADE'] = self.df['PRICE'].pct_change(periods=10).fillna(0).replace([np.inf, -np.inf], 0) * 100 >= 0
         # 大单资金流向
-        self.df['LARGE_BUY'] = np.where((buy_condition or (neutral_condition & self.df['PRICE_CHANGE_10_trade'] >= 0)) & self.df['IS_LARGE_ORDER'],
+        self.df['LARGE_BUY'] = np.where((buy_condition | (neutral_condition & self.df['PRICE_CHANGE_10_TRADE'] )) & self.df['IS_LARGE_ORDER'],
                                         self.df['AMOUNT_WAN'], 0)
-        self.df['LARGE_SELL'] = np.where(sell_condition or (neutral_condition & self.df['PRICE_CHANGE_10_trade'] < 0) & self.df['IS_LARGE_ORDER'],
+        self.df['LARGE_SELL'] = np.where(sell_condition | (neutral_condition & self.df['PRICE_CHANGE_10_TRADE']) & self.df['IS_LARGE_ORDER'],
                                          self.df['AMOUNT_WAN'], 0)
 
         # 特大单资金流向
@@ -95,29 +94,6 @@ class MainForceAnalyzer:
                 (self.df['NET_MAIN_INFLOW'] < 0) &
                 (self.df['PRICE_CHANGE'] > 0.5)  # 价格涨幅大于0.5%
         )
-
-    def calculate_main_force_indicators(self):
-        """计算主力操作指标"""
-        # 主力参与度
-        total_amount = self.df['AMOUNT_WAN'].sum()
-        main_force_amount = self.df['LARGE_BUY'].sum() + self.df['LARGE_SELL'].sum() + \
-                            self.df['HUGE_BUY'].sum() + self.df['HUGE_SELL'].sum()
-
-        self.main_force_participation = main_force_amount / total_amount if total_amount > 0 else 0
-
-        # 主力净流入强度
-        self.net_inflow_strength = (self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum() -
-                                    self.df['LARGE_SELL'].sum() - self.df['HUGE_SELL'].sum()) / total_amount
-
-        # 大单买入/卖出比率
-        total_buy_large = self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum()
-        total_sell_large = self.df['LARGE_SELL'].sum() + self.df['HUGE_SELL'].sum()
-        self.large_order_ratio = total_buy_large / total_sell_large if total_sell_large > 0 else float('inf')
-
-        # print(f"\n主力操作指标：")
-        # print(f"主力参与度: {self.main_force_participation:.2%}")
-        # print(f"净流入强度: {self.net_inflow_strength:.2%}")
-        # print(f"大单买卖比率: {self.large_order_ratio:.2f}")
 
     @staticmethod
     def split_to_windows(df: pd.DataFrame, window_size: int) -> pd.DataFrame:
@@ -157,6 +133,25 @@ class MainForceAnalyzer:
 
             if (MainForcePatterns.identify_wash_sale(chunk)):
                 statistics['WASH'] = statistics['WASH'] + 1
+
+        statistics['主力吸筹次数'] = self.df[self.df['ACCUMULATION_PATTERN'] == True].shape[0]
+        statistics['主力派发筹码次数'] = self.df[self.df['DISTRIBUTION_PATTERN'] == True].shape[0]
+
+        # 主力参与度
+        total_amount = self.df['AMOUNT_WAN'].sum()
+        main_force_amount = self.df['LARGE_BUY'].sum() + self.df['LARGE_SELL'].sum() + \
+                            self.df['HUGE_BUY'].sum() + self.df['HUGE_SELL'].sum()
+        statistics['主力参与度'] = main_force_amount / total_amount if total_amount > 0 else 0
+
+        # 主力净流入强度
+        statistics['主力净流入强度'] = (self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum() -
+                                    self.df['LARGE_SELL'].sum() - self.df['HUGE_SELL'].sum()) / total_amount
+
+        # 大单买入/卖出比率
+        total_buy_large = self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum()
+        total_sell_large = self.df['LARGE_SELL'].sum() + self.df['HUGE_SELL'].sum()
+        statistics['大单买卖比例'] = total_buy_large / total_sell_large if total_sell_large > 0 else float('inf')
+
         return statistics
 
     def analyze_by_time_slice(self, frequency='3min'):
@@ -224,8 +219,8 @@ class MainForcePatterns:
         """识别吸筹模式"""
         # 条件：连续大单买入 + 价格震荡或微跌
         buy_strength = df_window['LARGE_BUY'].sum() / df_window['AMOUNT_WAN'].sum()
+        # 变异系数。用于判断序列的波动率。越小说明越稳定
         price_volatility = df_window['PRICE'].std() / df_window['PRICE'].mean()
-
         return buy_strength > 0.3 and price_volatility < 0.02
 
     @staticmethod
@@ -233,11 +228,13 @@ class MainForcePatterns:
         """识别洗盘模式"""
         # 条件：大单打压 + 快速收回
         max_drawdown = (df_window['PRICE'].max() - df_window['PRICE'].min()) / df_window['PRICE'].max()
-
+        is_drawdown_recovery = (df_window["PRICE"].iloc[0] >= df_window['PRICE'].min() and df_window["PRICE"].iloc[0] <= df_window['PRICE'].max())
         recovery_time = (df_window[df_window['PRICE'] == df_window['PRICE'].max()]["TIME"].astype('int64').iloc[-1] // 10**9 -
                          df_window[df_window['PRICE'] == df_window['PRICE'].min()]["TIME"].astype('int64').iloc[0] // 10**9) / 60  # 恢复时间
+        # 主力净流入超过50万
+        main_force_in = df_window['NET_MAIN_INFLOW'].sum() >= 0
         # 1分钟之内价格从下跌2% 并且短时间内恢复
-        return max_drawdown > 0.02 and 0 < recovery_time < 1
+        return is_drawdown_recovery and max_drawdown > 0.02 and 0 < recovery_time < 2 and main_force_in
 
     @staticmethod
     def identify_distribution(df_window):
@@ -247,6 +244,27 @@ class MainForcePatterns:
         sell_pressure = df_window['LARGE_SELL'].sum() / df_window['AMOUNT_WAN'].sum()
         return price_increase > 0.01 and sell_pressure > 0.4
 
+def analyze_stocks(stocks: pd.DataFrame, output_file: str, mode:str, symbol: str):
+    ts.set_token("5b03bbe59725c145f229d4eb7fe73d8fc9dc98d9cde5e194a0e4d708")
+    with open(output_file, mode) as f:
+        # 东财数据
+        for index, row in stocks.iterrows():
+            if index <= 6000:
+                try:
+                    df = ts.realtime_tick(ts_code=f'{row["证券代码"]}.{symbol}', src='dc')
+                    df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
+                    df["PRICE"] = df["PRICE"].astype('float64')
+                    df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
+                    analyzer = MainForceAnalyzer(df)
+                    statistics = analyzer.analyze_main_force_activity()
+                    print(f'获取到了 证券：{row["证券代码"]}.{symbol} {row["证券简称"]} 主力监控信息 ' + str(statistics), file=f)
+                    if statistics['ACCUMULATION'] > 10 and statistics['WASH'] > 5 \
+                            and analyzer.df[analyzer.df['ACCUMULATION_PATTERN'] == True].shape[0] > 100:
+                        print(f'获取到了 证券：{row["证券代码"]}.{symbol} {row["证券简称"]} 多次出现主力吸筹和洗盘', file=f)
+                except Exception as e:
+                    print(e.with_traceback(), file=f)
+                    continue
+
 
 @lru_cache()
 def stock_info_a_code_name() -> pd.DataFrame:
@@ -255,48 +273,16 @@ def stock_info_a_code_name() -> pd.DataFrame:
     :return: 沪深京 A 股数据
     :rtype: pandas.DataFrame
     """
-    ts.set_token("5b03bbe59725c145f229d4eb7fe73d8fc9dc98d9cde5e194a0e4d708")
-
+    # 分析上证
     stock_sh = stock_info_sh_name_code(symbol="主板A股")
     stock_sh = stock_sh[["证券代码", "证券简称"]]
-    # 东财数据
-    for index, row in stock_sh.iterrows():
-        if index <= 6000:
-            try:
-                df = ts.realtime_tick(ts_code=f'{row["证券代码"]}.SH', src='dc')
-                df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
-                df["PRICE"] = df["PRICE"].astype('float64')
-                df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
-                analyzer = MainForceAnalyzer(df)
-                statistics = analyzer.analyze_main_force_activity()
+    analyze_stocks(stock_sh, output_file="output.txt", mode="w", symbol="SH")
 
-
-                print(f'获取到了 证券：{row["证券代码"]}.SH 主力监控信息 ' + str(statistics) + " 主力吸筹次数：" + str(analyzer.df[analyzer.df['ACCUMULATION_PATTERN'] == True].shape[0]))
-                if statistics['ACCUMULATION'] > 10 and statistics['WASH'] > 5 \
-                        and analyzer.df[analyzer.df['ACCUMULATION_PATTERN'] == True].shape[0] > 100:
-                    print(f'获取到了 证券：{row["证券代码"]}.SH 多次出现主力吸筹和洗盘')
-            except Exception as e:
-                print(e)
-                continue
-
-    # stock_sz = stock_info_sz_name_code(symbol="A股列表")
-    # stock_sz["A股代码"] = stock_sz["A股代码"].astype(str).str.zfill(6)
-    # # print(stock_sz.head())
-    # # 东财数据
-    # for index, row in stock_sz.iterrows():
-    #     if index <= 6000:
-    #         try:
-    #             df = ts.realtime_tick(ts_code=f'{row["A股代码"]}.SZ', src='dc')
-    #             df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
-    #             df["PRICE"] = df["PRICE"].astype('float64')
-    #             df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
-    #             df_master = df.query('(VOLUME > 10000 or AMOUNT >= 500000) and TYPE=="买盘"')
-    #             # print(df_master)
-    #             if df_master.shape[0] >= 100:
-    #                 print(f'获取到了 证券：{row["A股代码"]}.SZ  {row["A股简称"]} 统计信息：{df_master.describe()} ')
-    #         except Exception as e:
-    #             print(e)
-    #             continue
+    # 分析深圳
+    stock_sz = stock_info_sz_name_code(symbol="A股列表")
+    stock_sz["证券代码"] = stock_sz["A股代码"].astype(str).str.zfill(6)
+    stock_sz["证券简称"] = stock_sz["A股简称"]
+    analyze_stocks(stock_sh, output_file="output.txt", mode="w", symbol="SZ")
 
     # 科创板
     # stock_kcb = stock_info_sh_name_code(symbol="科创板")
