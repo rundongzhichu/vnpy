@@ -15,6 +15,7 @@ import tushare as ts
 from akshare import stock_info_sz_name_code, stock_info_bj_name_code, stock_info_sh_name_code
 from matplotlib import pyplot as plt
 from pandas import DataFrame
+from tqdm import tqdm
 
 
 class MainForceAnalyzer:
@@ -35,7 +36,7 @@ class MainForceAnalyzer:
 
     def analyze(self):
         """执行完整的主力分析"""
-        self.df["TIME"] = pd.to_datetime(self.df['TIME'])
+        self.df["TIME"] = pd.to_datetime(self.df['TIME'], format="%H:%M:%S")
         self.calculate_order_size()
         self.classify_orders()
         self.identify_main_force_patterns()
@@ -46,8 +47,8 @@ class MainForceAnalyzer:
         self.df['AMOUNT_WAN'] = self.df['AMOUNT'] / 10000
 
         # 定义大单阈值（可根据股票流通盘调整）
-        self.df['IS_LARGE_ORDER'] = self.df['AMOUNT_WAN'] > 50  # 50万元以上的算大单
-        self.df['IS_HUGE_ORDER'] = self.df['AMOUNT_WAN'] > 200  # 200万元以上的算特大单
+        self.df['IS_LARGE_ORDER'] = self.df.query("AMOUNT_WAN >= 50 and AMOUNT_WAN < 200")["AMOUNT_WAN"]  # 50万元以上的算大单
+        self.df['IS_HUGE_ORDER'] = self.df['AMOUNT_WAN'] >= 200  # 200万元以上的算特大单
 
         # print("大单统计：")
         # print(f"总成交笔数: {len(self.df)}")
@@ -234,7 +235,8 @@ class MainForcePatterns:
     def identify_accumulation(df_window):
         """识别吸筹模式"""
         # 条件：连续大单买入 + 价格震荡或微跌
-        buy_strength = df_window['LARGE_BUY'].sum() / df_window['AMOUNT_WAN'].sum()
+        amount_sum = df_window['AMOUNT_WAN'].sum()
+        buy_strength = df_window['LARGE_BUY'].sum() / (1 if amount_sum == 0 else amount_sum)
         # 变异系数。用于判断序列的波动率。越小说明越稳定
         price_volatility = df_window['PRICE'].std() / df_window['PRICE'].mean()
         return buy_strength > 0.3 and price_volatility < 0.02
@@ -267,21 +269,27 @@ def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_
     print(
         f'{"证券代码"},{"证券简称"},{"ACCUMULATION"},{"WASH"},{"主力吸筹次数"},{"主力派发筹码次数"},{"大单买入量"},{"大单卖出量"},{"主力净流入总额"},{"主力净流入强度"},{"大单买卖比例"},{"主力参与度"}',
         file=file)
+
     # 东财数据
-    for index, row in stocks.iterrows():
+    for index in tqdm(range(stocks.shape[0])):
+        row = stocks.iloc[index]
         if index <= 6000:
             try:
-                df = ts.realtime_tick(ts_code=f'{row["证券代码"]}.{symbol}', src='dc')
-                df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
-                df["PRICE"] = df["PRICE"].astype('float64')
-                df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
 
+                # print(f"处理{symbol}  {index}/{stocks.shape[0]} 条数据")
+                df = None
                 if need_save:
+                    df = ts.realtime_tick(ts_code=f'{row["证券代码"]}.{symbol}', src='dc')
+                    df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
+                    df["PRICE"] = df["PRICE"].astype('float64')
+                    df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
                     tick_data_path = f'data/{symbol}/{datetime.now().date()}'
                     # 检查文件夹是否存在，不存在则创建
                     if not os.path.exists(tick_data_path):
                         os.makedirs(tick_data_path)  # 递归创建目录（包括父目录）
                     df.to_csv(f'{tick_data_path}/{row["证券代码"]}_{symbol}_{row["证券简称"]}.csv')
+                else:
+                    df = pd.read_csv(f'data/{symbol}/{datetime.now().date()}/{str(row["证券代码"]).zfill(6)}.{symbol}.{row["证券简称"]}.csv')
 
                 analyzer = MainForceAnalyzer(df)
                 statistics = analyzer.analyze_main_force_activity()
@@ -330,17 +338,15 @@ def stock_info_a_code_name() -> pd.DataFrame:
     :return: 沪深京 A 股数据
     :rtype: pandas.DataFrame
     """
-    with open("output_sh.txt", "w") as f:
+    with open("output_sh.csv", "w") as f:
         # 分析上证
         stock_sh = get_stock_name_code(f"data/SH/{datetime.now().date()}", "SH")
         analyze_stocks(stock_sh, f, symbol="SH", need_save=False)
 
-    # with open("output_sz.txt", "w") as f:
-    #     # 分析深圳
-    #     stock_sz = stock_info_sz_name_code(symbol="A股列表")
-    #     stock_sz["证券代码"] = stock_sz["A股代码"].astype(str).str.zfill(6)
-    #     stock_sz["证券简称"] = stock_sz["A股简称"]
-    #     analyze_stocks(stock_sz, f, symbol="SZ", need_save=False)
+    with open("output_sz.csv", "w") as f:
+        # 分析深圳
+        stock_sz = get_stock_name_code(f"data/SZ/{datetime.now().date()}", "SZ")
+        analyze_stocks(stock_sz, f, symbol="SZ", need_save=False)
 
         # 科创板
         # stock_kcb = stock_info_sh_name_code(symbol="科创板")
