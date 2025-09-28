@@ -1,4 +1,9 @@
+import os
+from datetime import datetime
+import traceback
 from functools import lru_cache
+from io import TextIOWrapper, StringIO
+from time import sleep
 
 import akshare as ak
 import numpy as np
@@ -9,6 +14,8 @@ import requests
 import tushare as ts
 from akshare import stock_info_sz_name_code, stock_info_bj_name_code, stock_info_sh_name_code
 from matplotlib import pyplot as plt
+from pandas import DataFrame
+
 
 class MainForceAnalyzer:
     '''
@@ -137,13 +144,17 @@ class MainForceAnalyzer:
         statistics['主力吸筹次数'] = self.df[self.df['ACCUMULATION_PATTERN'] == True].shape[0]
         statistics['主力派发筹码次数'] = self.df[self.df['DISTRIBUTION_PATTERN'] == True].shape[0]
 
-        # 主力参与度
-        total_amount = self.df['AMOUNT_WAN'].sum()
-        main_force_amount = self.df['LARGE_BUY'].sum() + self.df['LARGE_SELL'].sum() + \
-                            self.df['HUGE_BUY'].sum() + self.df['HUGE_SELL'].sum()
-        statistics['主力参与度'] = main_force_amount / total_amount if total_amount > 0 else 0
+        # 大单买入量
+        statistics['大单买入量'] = self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum()
+
+        # 大单卖出量
+        statistics['大单卖出量'] = self.df['LARGE_SELL'].sum() + self.df['HUGE_SELL'].sum()
+
+        # 主力净流入总额
+        statistics['主力净流入总额'] = self.df['NET_MAIN_INFLOW'].sum()
 
         # 主力净流入强度
+        total_amount = self.df['AMOUNT_WAN'].sum()
         statistics['主力净流入强度'] = (self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum() -
                                     self.df['LARGE_SELL'].sum() - self.df['HUGE_SELL'].sum()) / total_amount
 
@@ -151,6 +162,11 @@ class MainForceAnalyzer:
         total_buy_large = self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum()
         total_sell_large = self.df['LARGE_SELL'].sum() + self.df['HUGE_SELL'].sum()
         statistics['大单买卖比例'] = total_buy_large / total_sell_large if total_sell_large > 0 else float('inf')
+
+        # 主力参与度
+        main_force_amount = self.df['LARGE_BUY'].sum() + self.df['LARGE_SELL'].sum() + \
+                            self.df['HUGE_BUY'].sum() + self.df['HUGE_SELL'].sum()
+        statistics['主力参与度'] = main_force_amount / total_amount if total_amount > 0 else 0
 
         return statistics
 
@@ -244,27 +260,68 @@ class MainForcePatterns:
         sell_pressure = df_window['LARGE_SELL'].sum() / df_window['AMOUNT_WAN'].sum()
         return price_increase > 0.01 and sell_pressure > 0.4
 
-def analyze_stocks(stocks: pd.DataFrame, output_file: str, mode:str, symbol: str):
+def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_save: bool = False):
     ts.set_token("5b03bbe59725c145f229d4eb7fe73d8fc9dc98d9cde5e194a0e4d708")
-    with open(output_file, mode) as f:
-        # 东财数据
-        for index, row in stocks.iterrows():
-            if index <= 6000:
-                try:
-                    df = ts.realtime_tick(ts_code=f'{row["证券代码"]}.{symbol}', src='dc')
-                    df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
-                    df["PRICE"] = df["PRICE"].astype('float64')
-                    df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
-                    analyzer = MainForceAnalyzer(df)
-                    statistics = analyzer.analyze_main_force_activity()
-                    print(f'获取到了 证券：{row["证券代码"]}.{symbol} {row["证券简称"]} 主力监控信息 ' + str(statistics), file=f)
-                    if statistics['ACCUMULATION'] > 10 and statistics['WASH'] > 5 \
-                            and analyzer.df[analyzer.df['ACCUMULATION_PATTERN'] == True].shape[0] > 100:
-                        print(f'获取到了 证券：{row["证券代码"]}.{symbol} {row["证券简称"]} 多次出现主力吸筹和洗盘', file=f)
-                except Exception as e:
-                    print(e.with_traceback(), file=f)
-                    continue
+    print(f"获取到了 {symbol}  {stocks.shape[0]}  只股票")
+    # 输出分析参数的标题，便于后续读取csv生成dadaframe
+    print(
+        f'{"证券代码"},{"证券简称"},{"ACCUMULATION"},{"WASH"},{"主力吸筹次数"},{"主力派发筹码次数"},{"大单买入量"},{"大单卖出量"},{"主力净流入总额"},{"主力净流入强度"},{"大单买卖比例"},{"主力参与度"}',
+        file=file)
+    # 东财数据
+    for index, row in stocks.iterrows():
+        if index <= 6000:
+            try:
+                df = ts.realtime_tick(ts_code=f'{row["证券代码"]}.{symbol}', src='dc')
+                df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
+                df["PRICE"] = df["PRICE"].astype('float64')
+                df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
 
+                if need_save:
+                    tick_data_path = f'data/{symbol}/{datetime.now().date()}'
+                    # 检查文件夹是否存在，不存在则创建
+                    if not os.path.exists(tick_data_path):
+                        os.makedirs(tick_data_path)  # 递归创建目录（包括父目录）
+                    df.to_csv(f'{tick_data_path}/{row["证券代码"]}_{symbol}_{row["证券简称"]}.csv')
+
+                analyzer = MainForceAnalyzer(df)
+                statistics = analyzer.analyze_main_force_activity()
+
+                print(f'{row["证券代码"]},{row["证券简称"]},{statistics["ACCUMULATION"]},{statistics["WASH"]},'
+                      f'{statistics["主力吸筹次数"]},{statistics["主力派发筹码次数"]},{statistics["大单买入量"].__str__()},'
+                      f'{statistics["大单卖出量"].__str__()},{statistics["主力净流入总额"].__str__()},{statistics["主力净流入强度"].__str__()},'
+                      f'{statistics["大单买卖比例"].__str__()},{statistics["主力参与度"].__str__()}', file=file)
+                # if statistics['ACCUMULATION'] > 10 and statistics['WASH'] > 5 \
+                #         and analyzer.df[analyzer.df['ACCUMULATION_PATTERN'] == True].shape[0] > 1:
+                #     print(f'获取到了 证券：{row["证券代码"]}.{symbol} {row["证券简称"]} 多次出现主力吸筹和洗盘', file=file)
+                if index % 1000 == 0:
+                    file.flush()
+            except Exception as e:
+                traceback.print_exc()  # 打印完整的堆栈跟踪
+                continue
+
+
+def get_stock_name_code(path: str, symbol: str) -> pd.DataFrame:
+    if path is not None or not path or path.strip() != "":
+        file_list = [entry.name.replace(".",",") for entry in os.scandir(path) if entry.is_file()]
+        # 示例数据：字符串列表（每行是逗号分隔的值）
+        header = "证券代码,symbol,证券简称,file_type"
+        file_list.insert(0, header)
+        # 合并成字符串并用 StringIO 模拟文件对象
+        csv_string = "\n".join(file_list)
+        df = pd.read_csv(StringIO(csv_string))
+        return df
+    else:
+        if symbol == "SH":
+            stock_sh = stock_info_sh_name_code(symbol="主板A股")
+            stock_sh = stock_sh[["证券代码", "证券简称"]]
+            return stock_sh
+        elif symbol == "SZ":
+            # 分析深圳
+            stock_sz = stock_info_sz_name_code(symbol="A股列表")
+            stock_sz["证券代码"] = stock_sz["A股代码"].astype(str).str.zfill(6)
+            stock_sz["证券简称"] = stock_sz["A股简称"]
+            return stock_sz
+    return None
 
 @lru_cache()
 def stock_info_a_code_name() -> pd.DataFrame:
@@ -273,30 +330,31 @@ def stock_info_a_code_name() -> pd.DataFrame:
     :return: 沪深京 A 股数据
     :rtype: pandas.DataFrame
     """
-    # 分析上证
-    stock_sh = stock_info_sh_name_code(symbol="主板A股")
-    stock_sh = stock_sh[["证券代码", "证券简称"]]
-    analyze_stocks(stock_sh, output_file="output.txt", mode="w", symbol="SH")
+    with open("output_sh.txt", "w") as f:
+        # 分析上证
+        stock_sh = get_stock_name_code(f"data/SH/{datetime.now().date()}", "SH")
+        analyze_stocks(stock_sh, f, symbol="SH", need_save=False)
 
-    # 分析深圳
-    stock_sz = stock_info_sz_name_code(symbol="A股列表")
-    stock_sz["证券代码"] = stock_sz["A股代码"].astype(str).str.zfill(6)
-    stock_sz["证券简称"] = stock_sz["A股简称"]
-    analyze_stocks(stock_sh, output_file="output.txt", mode="w", symbol="SZ")
+    # with open("output_sz.txt", "w") as f:
+    #     # 分析深圳
+    #     stock_sz = stock_info_sz_name_code(symbol="A股列表")
+    #     stock_sz["证券代码"] = stock_sz["A股代码"].astype(str).str.zfill(6)
+    #     stock_sz["证券简称"] = stock_sz["A股简称"]
+    #     analyze_stocks(stock_sz, f, symbol="SZ", need_save=False)
 
-    # 科创板
-    # stock_kcb = stock_info_sh_name_code(symbol="科创板")
-    # stock_kcb = stock_kcb[["证券代码", "证券简称"]]
+        # 科创板
+        # stock_kcb = stock_info_sh_name_code(symbol="科创板")
+        # stock_kcb = stock_kcb[["证券代码", "证券简称"]]
 
-    # 北交所
-    # stock_bse = stock_info_bj_name_code()
-    # stock_bse = stock_bse[["证券代码", "证券简称"]]
-    # stock_bse.columns = ["证券代码", "证券简称"]
-    #
-    # big_df = pd.concat(objs=[big_df, stock_sh], ignore_index=True)
-    # big_df = pd.concat(objs=[big_df, stock_kcb], ignore_index=True)
-    # big_df = pd.concat(objs=[big_df, stock_bse], ignore_index=True)
-    # big_df.columns = ["code", "name"]
+        # 北交所
+        # stock_bse = stock_info_bj_name_code()
+        # stock_bse = stock_bse[["证券代码", "证券简称"]]
+        # stock_bse.columns = ["证券代码", "证券简称"]
+        #
+        # big_df = pd.concat(objs=[big_df, stock_sh], ignore_index=True)
+        # big_df = pd.concat(objs=[big_df, stock_kcb], ignore_index=True)
+        # big_df = pd.concat(objs=[big_df, stock_bse], ignore_index=True)
+        # big_df.columns = ["code", "name"]
 
 
 stock_info_a_code_name()
