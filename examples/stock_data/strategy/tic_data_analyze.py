@@ -3,6 +3,7 @@ from datetime import datetime
 import traceback
 from functools import lru_cache
 from io import TextIOWrapper, StringIO
+from pathlib import Path
 from time import sleep
 
 import akshare as ak
@@ -262,7 +263,8 @@ class MainForcePatterns:
         sell_pressure = df_window['LARGE_SELL'].sum() / df_window['AMOUNT_WAN'].sum()
         return price_increase > 0.01 and sell_pressure > 0.4
 
-def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_save: bool = False):
+
+def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_save: bool = False, date_str:str='2025-09-30'):
     ts.set_token("5b03bbe59725c145f229d4eb7fe73d8fc9dc98d9cde5e194a0e4d708")
     print(f"获取到了 {symbol}  {stocks.shape[0]}  只股票")
     # 输出分析参数的标题，便于后续读取csv生成dadaframe
@@ -270,6 +272,7 @@ def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_
         f'{"证券代码"},{"证券简称"},{"ACCUMULATION"},{"WASH"},{"主力吸筹次数"},{"主力派发筹码次数"},{"大单买入量"},{"大单卖出量"},{"主力净流入总额"},{"主力净流入强度"},{"大单买卖比例"},{"主力参与度"}',
         file=file)
 
+    current_dir = os.path.dirname(os.path.abspath(__file__))
     # 东财数据
     for index in tqdm(range(stocks.shape[0])):
         row = stocks.iloc[index]
@@ -283,13 +286,13 @@ def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_
                     df["VOLUME"] = pd.to_numeric(df["VOLUME"], errors="coerce")
                     df["PRICE"] = df["PRICE"].astype('float64')
                     df['AMOUNT'] = df["VOLUME"] * df["PRICE"]
-                    tick_data_path = f'data/{symbol}/{datetime.now().date()}'
+                    tick_data_path = f'{current_dir}/data/{symbol}/{datetime.now().date()}'
                     # 检查文件夹是否存在，不存在则创建
                     if not os.path.exists(tick_data_path):
                         os.makedirs(tick_data_path)  # 递归创建目录（包括父目录）
                     df.to_csv(f'{tick_data_path}/{row["证券代码"]}_{symbol}_{row["证券简称"]}.csv')
                 else:
-                    df = pd.read_csv(f'data/{symbol}/{datetime.now().date()}/{str(row["证券代码"]).zfill(6)}.{symbol}.{row["证券简称"]}.csv')
+                    df = pd.read_csv(f'{current_dir}/data/{symbol}/{date_str}/{str(row["证券代码"]).zfill(6)}_{symbol}_{row["证券简称"]}.csv')
 
                 analyzer = MainForceAnalyzer(df)
                 statistics = analyzer.analyze_main_force_activity()
@@ -304,13 +307,15 @@ def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_
                 if index % 1000 == 0:
                     file.flush()
             except Exception as e:
+                print(f'处理{row["证券代码"]}.{symbol} 发生异常！')
                 traceback.print_exc()  # 打印完整的堆栈跟踪
                 continue
 
 
 def get_stock_name_code(path: str, symbol: str) -> pd.DataFrame:
-    if path is not None or not path or path.strip() != "":
-        file_list = [entry.name.replace(".",",") for entry in os.scandir(path) if entry.is_file()]
+    if path is not None and path.strip() != "":
+        file_list = [entry.name.replace("_",",") for entry in os.scandir(path) if entry.is_file()]
+        file_list = [entry.replace(".", ",") for entry in file_list]
         # 示例数据：字符串列表（每行是逗号分隔的值）
         header = "证券代码,symbol,证券简称,file_type"
         file_list.insert(0, header)
@@ -331,36 +336,47 @@ def get_stock_name_code(path: str, symbol: str) -> pd.DataFrame:
             return stock_sz
     return None
 
-@lru_cache()
-def stock_info_a_code_name() -> pd.DataFrame:
+
+def analyze_tick_data(date_str:str, need_save:bool=False,) -> pd.DataFrame:
     """
     沪深京 A 股列表
     :return: 沪深京 A 股数据
     :rtype: pandas.DataFrame
     """
-    with open("output_sh.csv", "w") as f:
-        # 分析上证
-        stock_sh = get_stock_name_code(f"data/SH/{datetime.now().date()}", "SH")
-        analyze_stocks(stock_sh, f, symbol="SH", need_save=False)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    with open(f"{current_dir}/output_sh.csv", "w") as f:
+        # # 分析上证
+        if not need_save:
+            stock_sh = get_stock_name_code(f"{current_dir}/data/SH/{date_str}", "SH")
+            analyze_stocks(stock_sh, f, symbol="SH", need_save=False)
+        else:
+            # 分析上证
+            stock_sh = get_stock_name_code(None, "SH")
+            analyze_stocks(stock_sh, f, symbol="SH", need_save=True)
 
-    with open("output_sz.csv", "w") as f:
-        # 分析深圳
-        stock_sz = get_stock_name_code(f"data/SZ/{datetime.now().date()}", "SZ")
-        analyze_stocks(stock_sz, f, symbol="SZ", need_save=False)
+    with open(f"{current_dir}/output_sz.csv", "w") as f:
+        if not need_save:
+            # 分析深圳
+            stock_sz = get_stock_name_code(f"{current_dir}/data/SZ/{date_str}", "SZ")
+            analyze_stocks(stock_sz, f, symbol="SZ", need_save=False)
+        else:
+            # 分析深圳
+            stock_sz = get_stock_name_code(None, "SZ")
+            analyze_stocks(stock_sz, f, symbol="SZ", need_save=True)
 
-        # 科创板
-        # stock_kcb = stock_info_sh_name_code(symbol="科创板")
-        # stock_kcb = stock_kcb[["证券代码", "证券简称"]]
+    # 科创板
+    # stock_kcb = stock_info_sh_name_code(symbol="科创板")
+    # stock_kcb = stock_kcb[["证券代码", "证券简称"]]
 
-        # 北交所
-        # stock_bse = stock_info_bj_name_code()
-        # stock_bse = stock_bse[["证券代码", "证券简称"]]
-        # stock_bse.columns = ["证券代码", "证券简称"]
-        #
-        # big_df = pd.concat(objs=[big_df, stock_sh], ignore_index=True)
-        # big_df = pd.concat(objs=[big_df, stock_kcb], ignore_index=True)
-        # big_df = pd.concat(objs=[big_df, stock_bse], ignore_index=True)
-        # big_df.columns = ["code", "name"]
+    # 北交所
+    # stock_bse = stock_info_bj_name_code()
+    # stock_bse = stock_bse[["证券代码", "证券简称"]]
+    # stock_bse.columns = ["证券代码", "证券简称"]
+    #
+    # big_df = pd.concat(objs=[big_df, stock_sh], ignore_index=True)
+    # big_df = pd.concat(objs=[big_df, stock_kcb], ignore_index=True)
+    # big_df = pd.concat(objs=[big_df, stock_bse], ignore_index=True)
+    # big_df.columns = ["code", "name"]
 
-
-stock_info_a_code_name()
+if __name__ == '__main__':
+    analyze_tick_data('2025-09-30',False)

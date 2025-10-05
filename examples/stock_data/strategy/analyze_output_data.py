@@ -8,6 +8,6 @@ def analyze_output_data(file_path:str):
     print(df.iloc[:, 1:8])
 
 if __name__ == "__main__":
-    analyze_output_data("output_sh.csv")
-    analyze_output_data("output_sz.csv")
+    analyze_output_data("../demo/output_sh.csv")
+    analyze_output_data("../demo/output_sz.csv")
 
