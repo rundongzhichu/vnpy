@@ -1,5 +1,8 @@
+import os
+
 import pandas as pd
 import numpy as np
+from empyrical import cum_returns
 
 
 def analyze_output_data(file_path:str):
@@ -8,6 +11,7 @@ def analyze_output_data(file_path:str):
     print(df.iloc[:, 1:8])
 
 if __name__ == "__main__":
-    analyze_output_data("../demo/output_sh.csv")
-    analyze_output_data("../demo/output_sz.csv")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    analyze_output_data(f"{current_dir}/output_sh.csv")
+    analyze_output_data(f"{current_dir}/output_sz.csv")
 
