@@ -71,20 +71,21 @@ class MainForceAnalyzer:
         trade_num = 20
         self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE'] = self.df['PRICE'].pct_change(periods=20).fillna(0).replace([np.inf, -np.inf], 0) * 100 >= 0
 
-        # 计算买单和卖单成交的金额
-        self.df['BUY_AMOUNT'] = np.where(buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_{trade_num}_TRADE']), self.df['AMOUNT_WAN'], 0)
-        self.df['SELL_AMOUNT'] = np.where(sell_condition | (neutral_condition & ~self.df[f'PRICE_CHANGE_{trade_num}_TRADE']), self.df['AMOUNT_WAN'], 0)
+        # 计算买单和卖单成交的金额 计算方向
+        self.df['DIRECTION'] = np.where(buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']), 'B', 'S')
+        self.df['BUY_AMOUNT'] = np.where(buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']), self.df['AMOUNT_WAN'], 0)
+        self.df['SELL_AMOUNT'] = np.where(sell_condition | (neutral_condition & ~self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']), self.df['AMOUNT_WAN'], 0)
 
         # 大单资金流向
-        self.df['LARGE_BUY'] = np.where((buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_{trade_num}_TRADE'])) & self.df['IS_LARGE_ORDER'],
+        self.df['LARGE_BUY'] = np.where(self.df['BUY_AMOUNT'] > 0 & self.df['IS_LARGE_ORDER'],
                                         self.df['AMOUNT_WAN'], 0)
-        self.df['LARGE_SELL'] = np.where(sell_condition | (neutral_condition & ~self.df[f'PRICE_CHANGE_{trade_num}_TRADE']) & self.df['IS_LARGE_ORDER'],
+        self.df['LARGE_SELL'] = np.where(self.df['SELL_AMOUNT'] > 0 & self.df['IS_LARGE_ORDER'],
                                          self.df['AMOUNT_WAN'], 0)
 
         # 特大单资金流向
-        self.df['HUGE_BUY'] = np.where(buy_condition & self.df['IS_HUGE_ORDER'],
+        self.df['HUGE_BUY'] = np.where(self.df['BUY_AMOUNT'] > 0 & self.df['IS_HUGE_ORDER'],
                                        self.df['AMOUNT_WAN'], 0)
-        self.df['HUGE_SELL'] = np.where(sell_condition & self.df['IS_HUGE_ORDER'],
+        self.df['HUGE_SELL'] = np.where(self.df['SELL_AMOUNT'] > 0 & self.df['IS_HUGE_ORDER'],
                                         self.df['AMOUNT_WAN'], 0)
 
         # 将loc函数self.df['LARGE_BUY'] | self.df['HUGE_BUY']作为条件，然后将等号后面的值赋予LARGE_NET_FLOW
@@ -115,46 +116,43 @@ class MainForceAnalyzer:
                 (self.df['PRICE_CHANGE'] > 0.5)  # 价格涨幅大于0.5%
         )
 
-    def advanced_pattern_recognition(df_tick):
+    def advanced_pattern_recognition(self):
         """
         高级模式识别
         """
         # 1. 隐形大单识别（多笔连续中等买单）
-        df_tick['medium_order'] = (
-                                          df_tick['volume'] > df_tick['volume'].quantile(0.6)) & \
-                                  (df_tick['volume'] < df_tick['volume'].quantile(0.8)
-                                   )
+        self.df['MEDIUM_ORDER'] = (self.df['VOLUME'] > self.df['VOLUME'].quantile(0.6)) & \
+                                  (self.df['VOLUME'] < self.df['VOLUME'].quantile(0.8))
 
-        df_tick['medium_buy_sequence'] = (
-            (df_tick['medium_order'] & (df_tick['direction'] == 'B')).astype(int)
+        self.df['MEDIUM_BUY_SEQUENCE'] = (
+            (self.df['MEDIUM_ORDER'] & (self.df['DIRECTION'] == 'B')).astype(int)
         )
 
-        # 识别连续中等买单
-        df_tick['medium_buy_group'] = (df_tick['medium_buy_sequence'].diff() != 0).cumsum()
+        # 识别连续中等买单  然后给一个分组编号
+        self.df['MEDIUM_BUY_GROUP'] = (self.df['MEDIUM_BUY_SEQUENCE'].diff() != 0).cumsum()
 
-        medium_buy_groups = df_tick[df_tick['medium_buy_sequence'] == 1].groupby('medium_buy_group').agg({
-            'volume': ['count', 'sum'],
-            'amount': 'sum',
-            'price': ['min', 'max', 'last']
+        medium_buy_groups = self.df[self.df['MEDIUM_BUY_SEQUENCE'] == 1].groupby('MEDIUM_BUY_GROUP').agg({
+            'VOLUME': ['count', 'sum'],
+            'AMOUNT_WAN': 'sum',
+            'PRICE': ['min', 'max', 'last']
         })
 
-        medium_buy_groups.columns = ['count', 'total_volume', 'total_amount', 'min_price', 'max_price', 'last_price']
+        medium_buy_groups.columns = ['VOLUME_COUNT', 'TOTAL_VOLUME', 'TOTAL_AMOUNT', 'MIN_PRICE', 'MAX_PRICE', 'LAST_PRICE']
 
         # 隐形吸筹信号
-        medium_buy_groups['stealth_accumulation'] = (
-                (medium_buy_groups['count'] >= 5) &
-                (medium_buy_groups['total_volume'] > df_tick['volume'].quantile(0.9)) &
-                ((medium_buy_groups['max_price'] - medium_buy_groups['min_price']) / medium_buy_groups[
-                    'min_price'] < 0.01)
+        medium_buy_groups['STEALTH_ACCUMULATION'] = (
+                (medium_buy_groups['VOLUME_COUNT'] >= 5) &
+                (medium_buy_groups['TOTAL_VOLUME'] > self.df['VOLUME'].quantile(0.9)) &
+                ((medium_buy_groups['MAX_PRICE'] - medium_buy_groups['MIN_PRICE']) / medium_buy_groups[
+                    'MIN_PRICE'] < 0.01) # 价格波动小于1%
         )
 
-        # 2. 大单撤单分析（需要level2数据）
+        # todo 2. 大单撤单分析（需要level2数据）
         # 这里简化处理，实际需要委托队列数据
-
         return medium_buy_groups
 
     @staticmethod
-    def aggregate_analysis(df, frequency='3min'):
+    def aggregate_analysis(df, frequency='5min'):
         """按时间切片分析主力行为"""
         # 重采样到指定频率
         df.set_index('TIME', inplace=True)
@@ -188,7 +186,7 @@ class MainForceAnalyzer:
         # 4.计算frequency的主力净流入
         resampled['MINUTE_NET_INFLOW'] = (resampled['LARGE_BUY'] + resampled['HUGE_BUY'] -
                                           resampled['LARGE_SELL'] - resampled['HUGE_SELL'])
-        # todo 5.识别主力集中操作时段
+        # todo 5.识别主力集中操作时段。当分钟净流入的绝对值大于其标准差时，认为主力资金活跃  识别约32%的异常活跃时段（基于正态分布假设）
         resampled['MAIN_FORCE_ACTIVE'] = resampled['MINUTE_NET_INFLOW'].abs() > resampled['MINUTE_NET_INFLOW'].std()
         return resampled
 
@@ -218,28 +216,46 @@ class MainForceAnalyzer:
         #.diff()：计算相邻行的差值
         #!= 0：判断是否发生变化（0→1或1→0）
         #.cumsum()：累积求和，为每个连续序列分配唯一分组编号
-
-        df_tick['buy_sequence'] = (df_tick['TYPE'] == 'B').astype(int)
-        df_tick['buy_group'] = (df_tick['buy_sequence'].diff() != 0).cumsum()
-
+        df_tick['BUY_SEQUENCE'] = (df_tick['DIRECTION'] == 'B').astype(int)
+        df_tick['BUY_GROUP'] = (df_tick['BUY_SEQUENCE'].diff() != 0).cumsum()
 
         # 计算连续买入组的统计
-        buy_groups = df_tick[df_tick['direction'] == 'B'].groupby('buy_group').agg({
-            'volume': ['count', 'sum', 'mean'],
-            'amount': 'sum',
-            'price': 'mean'
+        buy_groups = df_tick[df_tick['DIRECTION'] == 'B'].groupby('BUY_GROUP').agg({
+            'VOLUME': ['count', 'sum', 'mean'],
+            'AMOUNT_WAN': 'sum',
+            'PRICE': 'mean'
         })
-
-        buy_groups.columns = ['trade_count', 'total_volume', 'avg_volume', 'total_amount', 'avg_price']
+        buy_groups.columns = ['VOLUME_COUNT', 'TOTAL_VOLUME', 'AVG_VOLUME', 'TOTAL_AMOUNT', 'AVG_PRICE']
 
         # 识别疑似拆分大单（连续多笔中等规模买入）
-        buy_groups['likely_split'] = (
-                (buy_groups['trade_count'] >= 3) &
-                (buy_groups['avg_volume'] > df_tick['volume'].quantile(0.6)) &
-                (buy_groups['avg_volume'] < df_tick['volume'].quantile(0.8))
+        buy_groups['LIKELY_SPLIT'] = (
+                (buy_groups['TRADE_COUNT'] >= 3) &
+                (buy_groups['AVG_VOLUME'] > df_tick['VOLUME'].quantile(0.6)) &
+                (buy_groups['AVG_VOLUME'] < df_tick['VOLUME'].quantile(0.8)) # 划分成交量的大小
         )
-
         return df_aggregated, buy_groups
+
+    @staticmethod
+    def split_to_windows(df: pd.DataFrame, window_size: int) -> pd.DataFrame:
+        """ 按照交易记录条数拆分数据到指定窗口大小 """
+        for i in range(0, len(df), window_size):
+            yield i / window_size, df.iloc[i: i + window_size]
+
+    @staticmethod
+    def split_by_time_window(df, time_col, window=3):
+        """按时间窗口拆分 DataFrame  默认三分钟"""
+        df[time_col] = pd.to_datetime(df[time_col])  # 确保是 datetime
+        # df = df.sort_values(time_col)  # 按时间排序
+
+        # 计算分组（每 3 分钟一组）
+        df["group"] = ((df[time_col].astype('int64') // 10 ** 9).astype('int64') // (np.int64(window) * 60)).astype(
+            "int")
+        # 按分组拆分
+        chunks = [group for _, group in df.groupby("group")]
+        # 删除临时分组列
+        for chunk in chunks:
+            chunk.drop("group", axis=1, inplace=True)
+        return chunks
 
     def visualize_main_force_analysis(self):
         """可视化主力分析结果"""
@@ -277,28 +293,6 @@ class MainForceAnalyzer:
         plt.tight_layout()
         plt.show()
 
-
-    @staticmethod
-    def split_to_windows(df: pd.DataFrame, window_size: int) -> pd.DataFrame:
-        """ 按照交易记录条数拆分数据到指定窗口大小 """
-        for i in range(0, len(df), window_size):
-            yield i / window_size, df.iloc[i: i + window_size]
-
-    @staticmethod
-    def split_by_time_window(df, time_col, window=3):
-        """按时间窗口拆分 DataFrame  默认三分钟"""
-        df[time_col] = pd.to_datetime(df[time_col])  # 确保是 datetime
-        # df = df.sort_values(time_col)  # 按时间排序
-
-        # 计算分组（每 3 分钟一组）
-        df["group"] = ((df[time_col].astype('int64') // 10 ** 9).astype('int64') // (np.int64(window) * 60)).astype(
-            "int")
-        # 按分组拆分
-        chunks = [group for _, group in df.groupby("group")]
-        # 删除临时分组列
-        for chunk in chunks:
-            chunk.drop("group", axis=1, inplace=True)
-        return chunks
 
     def analyze_main_force_activity(self) -> map:
         # 拆分成 5 个子 DataFrame（行数尽量均匀）
