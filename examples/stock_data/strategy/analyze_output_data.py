@@ -9,7 +9,7 @@ def analyze_output_data(file_path:str):
     df = pd.read_csv(file_path)
     df_score_ascending = df.sort_values(by='SCORE', ascending=False)
     print(df_score_ascending.head(10).iloc[:, 1:8])
-    df_score_ascending_filtered = df_score_ascending.loc[(df_score_ascending.NET_MAIN_INFLOW > 3000).astype(bool) & (df_score_ascending.MAIN_FORCE_BUY > 3000).astype(bool)]
+    df_score_ascending_filtered = df_score_ascending.loc[(df_score_ascending.NET_MAIN_INFLOW > -1000).astype(bool) & (df_score_ascending.MAIN_FORCE_BUY > 1000).astype(bool)]
     print(df_score_ascending_filtered.head(10).iloc[:, 1:8])
 
 if __name__ == "__main__":

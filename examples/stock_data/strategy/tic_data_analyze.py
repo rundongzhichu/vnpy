@@ -70,17 +70,27 @@ class MainForceAnalyzer:
         """计算每笔成交的订单规模"""
         # 计算每笔成交的金额（万元） 找到成交量和成交额的分位数，获取到讲数据0.8或者0.92拆分的数值
         self.df['AMOUNT_WAN'] = self.df['AMOUNT'] / 10000
-        large_volume_threshold = self.df['VOLUME'].quantile(0.8)
-        huge_volume_threshold = self.df['VOLUME'].quantile(0.92)
-        large_threshold = self.df['AMOUNT_WAN'].quantile(0.8)  # 找出
-        huge_threshold = self.df['AMOUNT_WAN'].quantile(0.92)
+        # large_volume_threshold = self.df['VOLUME'].quantile(0.8)
+        # huge_volume_threshold = self.df['VOLUME'].quantile(0.92)
+        # large_threshold = self.df['AMOUNT_WAN'].quantile(0.8)  # 找出
+        # huge_threshold = self.df['AMOUNT_WAN'].quantile(0.92)
+
+        # 100 万定义为大单 200万为特大单
+        large_threshold = 100  # 找出
+        huge_threshold = 200
+
+        # # 定义大单阈值（可根据股票流通盘调整）
+        # self.df['IS_LARGE_ORDER'] = self.df.query(
+        #     f"(AMOUNT_WAN >= {large_threshold} and AMOUNT_WAN < {huge_threshold}) or (VOLUME >= {large_volume_threshold} and VOLUME < {huge_volume_threshold})")[
+        #     "AMOUNT_WAN"]  # 50万元以上的算大单
+        # self.df['IS_HUGE_ORDER'] = (self.df['AMOUNT_WAN'] >= huge_threshold).astype(bool) | (
+        #             self.df['VOLUME'] >= huge_volume_threshold).astype(bool)  # 200万元以上的算特大单
 
         # 定义大单阈值（可根据股票流通盘调整）
         self.df['IS_LARGE_ORDER'] = self.df.query(
-            f"(AMOUNT_WAN >= {large_threshold} and AMOUNT_WAN < {huge_threshold}) or (VOLUME >= {large_volume_threshold} and VOLUME < {huge_volume_threshold})")[
+            f"(AMOUNT_WAN >= {large_threshold} and AMOUNT_WAN < {huge_threshold})")[
             "AMOUNT_WAN"]  # 50万元以上的算大单
-        self.df['IS_HUGE_ORDER'] = (self.df['AMOUNT_WAN'] >= huge_threshold).astype(bool) | (
-                    self.df['VOLUME'] >= huge_volume_threshold).astype(bool)  # 200万元以上的算特大单
+        self.df['IS_HUGE_ORDER'] = (self.df['AMOUNT_WAN'] >= huge_threshold).astype(bool)  # 200万元以上的算特大单
 
         # print("大单统计：")
         # print(f"总成交笔数: {len(self.df)}")
@@ -156,8 +166,8 @@ class MainForceAnalyzer:
         高级模式识别 中单吸筹  大单撤单分析等
         """
         # 1. 隐形大单识别（多笔连续中等买单）
-        self.df['MEDIUM_ORDER'] = (self.df['VOLUME'] > self.df['VOLUME'].quantile(0.6)) & \
-                                  (self.df['VOLUME'] < self.df['VOLUME'].quantile(0.8))
+        self.df['MEDIUM_ORDER'] = (self.df['AMOUNT_WAN'] > 50) & \
+                                  (self.df['AMOUNT_WAN'] < 100)
         self.df['MEDIUM_BUY_SEQUENCE'] = (
             (self.df['MEDIUM_ORDER'] & (self.df['DIRECTION'] == 'B')).astype(int)
         )
@@ -174,7 +184,7 @@ class MainForceAnalyzer:
         # 隐形吸筹信号
         medium_buy_groups['MEDIUM_STEALTH_ACCUMULATION'] = (
                 (medium_buy_groups['VOLUME_COUNT'] >= 5) &
-                (medium_buy_groups['TOTAL_VOLUME'] > self.df['VOLUME'].quantile(0.9)) &
+                (medium_buy_groups['TOTAL_AMOUNT'] > 100) &
                 ((medium_buy_groups['MAX_PRICE'] - medium_buy_groups['MIN_PRICE']) / medium_buy_groups[
                     'MIN_PRICE'] < 0.01)  # 价格波动小于1%
         )
@@ -323,15 +333,15 @@ class MainForceAnalyzer:
                 - statistics['WINDOW_DISTRIBUTION']
                 + math.ceil(statistics['MAIN_FORCE_BUY'] / 5000.0) * 3
                 - math.ceil(statistics['MAIN_FORCE_SELL'] / 5000.0) * 3
-                + math.ceil(statistics['NET_MAIN_INFLOW'] / 3000) * 4
+                + math.ceil(statistics['NET_MAIN_INFLOW'] / 3000) * 10
                 + int(statistics['NET_MAIN_INFLOW_RATIO'] > 0.10) *2
                 + int(statistics['MAIN_FORCE_BUY_RATIO'] > 0.6) *2
                 + int(statistics['MAIN_FORCE_BUY_SELL_RATIO'] > 1)
                 + int(statistics['MAIN_FORCE_ACTIVITY_RATIO'] > 0.12)
                 + int(statistics['MAIN_FORCE_5MIN_ACCUMULATION'])
                 + int(statistics['MAIN_FORCE_5MIN_ACCUMULATION_NEAR_SUPPORT'])
-                + int(statistics['LIKELY_MEDIUM_SPLIT_BUY']) * 2
-                + int(statistics['MAIN_FORCE_MEDIUM_STEALTH_ACCUMULATION']) * 2
+                + int(statistics['LIKELY_MEDIUM_SPLIT_BUY'])
+                + int(statistics['MAIN_FORCE_MEDIUM_STEALTH_ACCUMULATION'])
         )
         statistics['SCORE'] = score
         return statistics
@@ -418,15 +428,15 @@ class MainForcePatterns:
         # 计算连续买入组的统计
         buy_groups = df_tick[df_tick['DIRECTION'] == 'B'].groupby('BUY_GROUP').agg({
             'VOLUME': ['count', 'sum', 'mean'],
-            'AMOUNT_WAN': 'sum',
+            'AMOUNT_WAN': ['sum', 'mean'],
             'PRICE': 'mean'
         })
-        buy_groups.columns = ['VOLUME_COUNT', 'TOTAL_VOLUME', 'AVG_VOLUME', 'TOTAL_AMOUNT', 'AVG_PRICE']
+        buy_groups.columns = ['VOLUME_COUNT', 'TOTAL_VOLUME', 'AVG_VOLUME', 'TOTAL_AMOUNT', 'AVG_AMOUNT', 'AVG_PRICE']
         # 识别疑似拆分大单（连续多笔中等规模买入）
         buy_groups['LIKELY_MEDIUM_SPLIT_BUY'] = (
                 (buy_groups['VOLUME_COUNT'] >= 3) &
-                (buy_groups['AVG_VOLUME'] > df_tick['VOLUME'].quantile(0.6)) &
-                (buy_groups['AVG_VOLUME'] < df_tick['VOLUME'].quantile(0.8))  # 划分成交量的大小
+                (buy_groups['AVG_AMOUNT'] > 50) &
+                (buy_groups['AVG_AMOUNT'] < 100)  # 划分成交量的大小
         )
         return df_aggregated, buy_groups
 
@@ -436,12 +446,9 @@ class MainForcePatterns:
         # 条件：大单打压 + 快速收回
         max_drawdown = (df_window['PRICE'].max() - df_window['PRICE'].min()) / df_window['PRICE'].max()
         is_drawdown_recovery = (
-                    df_window["PRICE"].iloc[0] >= df_window['PRICE'].min() and df_window["PRICE"].iloc[0] <= df_window[
-                'PRICE'].max())
-        recovery_time = (df_window[df_window['PRICE'] == df_window['PRICE'].max()]["TIME"].astype('int64').iloc[
-                             -1] // 10 ** 9 -
-                         df_window[df_window['PRICE'] == df_window['PRICE'].min()]["TIME"].astype('int64').iloc[
-                             0] // 10 ** 9) / 60  # 恢复时间
+                    df_window["PRICE"].iloc[0] >= df_window['PRICE'].min() and df_window["PRICE"].iloc[0] <= df_window['PRICE'].max())
+        recovery_time = (df_window[df_window['PRICE'] == df_window['PRICE'].max()]["TIME"].astype('int64').iloc[-1] // 10 ** 9
+                         - df_window[df_window['PRICE'] == df_window['PRICE'].min()]["TIME"].astype('int64').iloc[0] // 10 ** 9) / 60  # 恢复时间
         # 主力净流入超过50万
         main_force_in = df_window['NET_MAIN_INFLOW'].sum() >= 0
         # 2分钟之内价格从下跌2% 并且短时间内恢复
