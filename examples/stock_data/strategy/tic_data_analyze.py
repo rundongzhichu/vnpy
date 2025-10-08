@@ -72,13 +72,15 @@ class MainForceAnalyzer:
         self.df['AMOUNT_WAN'] = self.df['AMOUNT'] / 10000
         large_volume_threshold = self.df['VOLUME'].quantile(0.8)
         huge_volume_threshold = self.df['VOLUME'].quantile(0.92)
-        large_threshold = self.df['AMOUNT_WAN'].quantile(0.8) # 找出
+        large_threshold = self.df['AMOUNT_WAN'].quantile(0.8)  # 找出
         huge_threshold = self.df['AMOUNT_WAN'].quantile(0.92)
 
-
         # 定义大单阈值（可根据股票流通盘调整）
-        self.df['IS_LARGE_ORDER'] = self.df.query(f"(AMOUNT_WAN >= {large_threshold} and AMOUNT_WAN < {huge_threshold}) or (VOLUME >= {large_volume_threshold} and VOLUME < {huge_volume_threshold})")["AMOUNT_WAN"]  # 50万元以上的算大单
-        self.df['IS_HUGE_ORDER'] = (self.df['AMOUNT_WAN'] >= huge_threshold).astype(bool) | (self.df['VOLUME'] >= huge_volume_threshold).astype(bool)  # 200万元以上的算特大单
+        self.df['IS_LARGE_ORDER'] = self.df.query(
+            f"(AMOUNT_WAN >= {large_threshold} and AMOUNT_WAN < {huge_threshold}) or (VOLUME >= {large_volume_threshold} and VOLUME < {huge_volume_threshold})")[
+            "AMOUNT_WAN"]  # 50万元以上的算大单
+        self.df['IS_HUGE_ORDER'] = (self.df['AMOUNT_WAN'] >= huge_threshold).astype(bool) | (
+                    self.df['VOLUME'] >= huge_volume_threshold).astype(bool)  # 200万元以上的算特大单
 
         # print("大单统计：")
         # print(f"总成交笔数: {len(self.df)}")
@@ -94,12 +96,18 @@ class MainForceAnalyzer:
 
         # 计算20笔交易的价格变化是否是正向的
         trade_num = 20
-        self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE'] = self.df['PRICE'].pct_change(periods=20).fillna(0).replace([np.inf, -np.inf], 0) * 100 >= 0
+        self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE'] = self.df['PRICE'].pct_change(periods=20).fillna(0).replace(
+            [np.inf, -np.inf], 0) * 100 >= 0
 
         # 计算买单和卖单成交的金额 计算方向
-        self.df['DIRECTION'] = np.where(buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']), 'B', 'S')
-        self.df['BUY_AMOUNT'] = np.where(buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']), self.df['AMOUNT_WAN'], 0)
-        self.df['SELL_AMOUNT'] = np.where(sell_condition | (neutral_condition & ~self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']), self.df['AMOUNT_WAN'], 0)
+        self.df['DIRECTION'] = np.where(
+            buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']), 'B', 'S')
+        self.df['BUY_AMOUNT'] = np.where(
+            buy_condition | (neutral_condition & self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']),
+            self.df['AMOUNT_WAN'], 0)
+        self.df['SELL_AMOUNT'] = np.where(
+            sell_condition | (neutral_condition & ~self.df[f'PRICE_CHANGE_POSITIVE_{trade_num}_TRADE']),
+            self.df['AMOUNT_WAN'], 0)
 
         # 大单资金流向
         self.df['LARGE_BUY'] = np.where((self.df['BUY_AMOUNT'] > 0).astype(bool) & self.df['IS_LARGE_ORDER'],
@@ -114,9 +122,12 @@ class MainForceAnalyzer:
                                         self.df['AMOUNT_WAN'], 0)
 
         # 将loc函数self.df['LARGE_BUY'] | self.df['HUGE_BUY']作为条件，然后将等号后面的值赋予LARGE_NET_FLOW
-        self.df.loc[(self.df['LARGE_BUY'] > 0).astype(bool) | (self.df['HUGE_BUY'] > 0).astype(bool), 'LARGE_NET_FLOW'] = self.df['AMOUNT_WAN']
-        self.df.loc[(self.df['LARGE_SELL'] > 0).astype(bool) | (self.df['HUGE_SELL'] > 0).astype(bool), 'LARGE_NET_FLOW'] = -self.df['AMOUNT_WAN']
-
+        self.df.loc[
+            (self.df['LARGE_BUY'] > 0).astype(bool) | (self.df['HUGE_BUY'] > 0).astype(bool), 'LARGE_NET_FLOW'] = \
+        self.df['AMOUNT_WAN']
+        self.df.loc[
+            (self.df['LARGE_SELL'] > 0).astype(bool) | (self.df['HUGE_SELL'] > 0).astype(bool), 'LARGE_NET_FLOW'] = - \
+        self.df['AMOUNT_WAN']
 
     def identify_main_force_patterns(self, rolling_window: int = 5):
         """简单识别主力操作模式 准备主力相关数据"""
@@ -131,12 +142,12 @@ class MainForceAnalyzer:
         # 简单识别主力吸筹模式（价格平稳或下跌时大单买入）
         self.df['PRICE_CHANGE'] = self.df['PRICE'].pct_change() * 100
         self.df['ACCUMULATION_PATTERN'] = (
-                (self.df['NET_MAIN_INFLOW'] > 0) &
+                (self.df['NET_MAIN_INFLOW'] > 100) &
                 (self.df['PRICE_CHANGE'] < 0.5)  # 价格涨幅小于0.5%
         )
         # 简单识别主力出货模式（价格上涨时大单卖出）
         self.df['DISTRIBUTION_PATTERN'] = (
-                (self.df['NET_MAIN_INFLOW'] < 0) &
+                (self.df['NET_MAIN_INFLOW'] < -100) &
                 (self.df['PRICE_CHANGE'] > 0.5)  # 价格涨幅大于0.5%
         )
 
@@ -157,14 +168,15 @@ class MainForceAnalyzer:
             'AMOUNT_WAN': 'sum',
             'PRICE': ['min', 'max', 'last']
         })
-        medium_buy_groups.columns = ['VOLUME_COUNT', 'TOTAL_VOLUME', 'TOTAL_AMOUNT', 'MIN_PRICE', 'MAX_PRICE', 'LAST_PRICE']
+        medium_buy_groups.columns = ['VOLUME_COUNT', 'TOTAL_VOLUME', 'TOTAL_AMOUNT', 'MIN_PRICE', 'MAX_PRICE',
+                                     'LAST_PRICE']
 
         # 隐形吸筹信号
         medium_buy_groups['MEDIUM_STEALTH_ACCUMULATION'] = (
                 (medium_buy_groups['VOLUME_COUNT'] >= 5) &
                 (medium_buy_groups['TOTAL_VOLUME'] > self.df['VOLUME'].quantile(0.9)) &
                 ((medium_buy_groups['MAX_PRICE'] - medium_buy_groups['MIN_PRICE']) / medium_buy_groups[
-                    'MIN_PRICE'] < 0.01) # 价格波动小于1%
+                    'MIN_PRICE'] < 0.01)  # 价格波动小于1%
         )
 
         # todo 2. 大单撤单分析（需要level2数据）
@@ -193,9 +205,11 @@ class MainForceAnalyzer:
 
         # 1.计算大单比例
         # count（）计算每个时间区间内非空值的数量
-        resampled['MAIN_FORCE_ORDER_RATIO'] = (resampled['IS_LARGE_ORDER'] + resampled['IS_HUGE_ORDER'])/ len(df.resample(frequency).count())
+        resampled['MAIN_FORCE_ORDER_RATIO'] = (resampled['IS_LARGE_ORDER'] + resampled['IS_HUGE_ORDER']) / len(
+            df.resample(frequency).count())
         resampled['MAIN_FORCE_BUY_RATIO'] = ((resampled['LARGE_BUY'] + resampled['HUGE_BUY'])
-                                        / (resampled['LARGE_SELL'] + resampled['HUGE_SELL'] + resampled['HUGE_BUY'] + resampled['HUGE_BUY']).replace(0,1))
+                                             / (resampled['LARGE_SELL'] + resampled['HUGE_SELL'] + resampled[
+                    'HUGE_BUY'] + resampled['HUGE_BUY']).replace(0, 1))
         # 2.大单净流入强度
         resampled['LARGE_NET_STRENGTH'] = resampled['LARGE_NET_FLOW'] / resampled['AMOUNT_WAN']
 
@@ -213,7 +227,8 @@ class MainForceAnalyzer:
         resampled['BUY_SIGNAL'] = (
                 resampled['MAIN_FORCE_ACTIVE'] &
                 (resampled['MINUTE_NET_INFLOW'] > 0) &
-                (resampled['MINUTE_NET_INFLOW'] > resampled['MINUTE_NET_INFLOW'].shift(1)) # 将整个序列向后移动1个位置，相当于获取前一个时间段的数据
+                (resampled['MINUTE_NET_INFLOW'] > resampled['MINUTE_NET_INFLOW'].shift(1))
+        # 将整个序列向后移动1个位置，相当于获取前一个时间段的数据
         )
 
         resampled['SELL_SIGNAL'] = (
@@ -242,7 +257,7 @@ class MainForceAnalyzer:
             if (MainForcePatterns.identify_wash_sale(chunk)):
                 statistics['WINDOW_WASH'] = statistics['WINDOW_WASH'] + 1
 
-            if(MainForcePatterns.identify_distribution(chunk)):
+            if (MainForcePatterns.identify_distribution(chunk)):
                 statistics['WINDOW_DISTRIBUTION'] = statistics['WINDOW_DISTRIBUTION'] + 1
 
         # 统计简单的时间操作的系数
@@ -261,14 +276,16 @@ class MainForceAnalyzer:
         # 主力净流入强度
         total_amount = self.df['AMOUNT_WAN'].sum()
         statistics['NET_MAIN_INFLOW_RATIO'] = self.df['NET_MAIN_INFLOW'].sum() / total_amount
-        main_force_total_amount = self.df['LARGE_SELL'].sum() + self.df['HUGE_SELL'].sum() + self.df['HUGE_BUY'].sum() + self.df['HUGE_BUY'].sum()
+        main_force_total_amount = self.df['LARGE_SELL'].sum() + self.df['HUGE_SELL'].sum() + self.df['HUGE_BUY'].sum() + \
+                                  self.df['HUGE_BUY'].sum()
         statistics['MAIN_FORCE_BUY_RATIO'] = ((self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum())
-                                             / (main_force_total_amount if main_force_total_amount != 0 else np.inf))
+                                              / (main_force_total_amount if main_force_total_amount != 0 else np.inf))
 
         # 大单买入/卖出比率
         total_buy_large = self.df['LARGE_BUY'].sum() + self.df['HUGE_BUY'].sum()
         total_sell_large = self.df['LARGE_SELL'].sum() + self.df['HUGE_SELL'].sum()
-        statistics['MAIN_FORCE_BUY_SELL_RATIO'] = total_buy_large / total_sell_large if total_sell_large > 0 else float('inf')
+        statistics['MAIN_FORCE_BUY_SELL_RATIO'] = total_buy_large / total_sell_large if total_sell_large > 0 else float(
+            'inf')
 
         # 主力参与度
         main_force_amount = self.df['LARGE_BUY'].sum() + self.df['LARGE_SELL'].sum() + \
@@ -278,14 +295,17 @@ class MainForceAnalyzer:
         # 聚合分析
         # 五分钟聚合分析
         df_5min_aggregate = self.aggregate_analysis(self.df, '5min', 10)
-        df_aggregated, buy_groups = MainForcePatterns.identify_aggregate_accumulation_features(self.df.copy(), df_5min_aggregate)
+        df_aggregated, buy_groups = MainForcePatterns.identify_aggregate_accumulation_features(self.df.copy(),
+                                                                                               df_5min_aggregate)
         statistics['MAIN_FORCE_5MIN_ACCUMULATION'] = df_aggregated['ACCUMULATION_SIGNAL_1'].astype(int).sum()
-        statistics['MAIN_FORCE_5MIN_ACCUMULATION_NEAR_SUPPORT'] = df_aggregated['ACCUMULATION_SIGNAL_2'].astype(int).sum()
+        statistics['MAIN_FORCE_5MIN_ACCUMULATION_NEAR_SUPPORT'] = df_aggregated['ACCUMULATION_SIGNAL_2'].astype(
+            int).sum()
         statistics['LIKELY_MEDIUM_SPLIT_BUY'] = buy_groups["LIKELY_MEDIUM_SPLIT_BUY"].astype(int).sum()
 
         # 高级主力行为分析
         medium_buy_groups = self.advanced_main_force_pattern_recognition()
-        statistics['MAIN_FORCE_MEDIUM_STEALTH_ACCUMULATION'] = medium_buy_groups['MEDIUM_STEALTH_ACCUMULATION'].astype(int).sum()
+        statistics['MAIN_FORCE_MEDIUM_STEALTH_ACCUMULATION'] = medium_buy_groups['MEDIUM_STEALTH_ACCUMULATION'].astype(
+            int).sum()
 
         return statistics
 
@@ -296,22 +316,22 @@ class MainForceAnalyzer:
         """
         # 评分
         score = (
-                (statistics['ACCUMULATION_SIMPLE_PATTERN_COUNT']) * 2
-                - (statistics['DISTRIBUTION_SIMPLE_PATTERN_COUNT']) * 2
-                + statistics['WINDOW_ACCUMULATION']*2
-                + statistics['WINDOW_WASH'] * 2
-                + statistics['WINDOW_DISTRIBUTION']* 2
-                + math.ceil(statistics['MAIN_FORCE_BUY'] / 5000.0)
-                - math.ceil(statistics['MAIN_FORCE_SELL'] / 5000.0)
-                + int(statistics['NET_MAIN_INFLOW'] > 3000)
-                + int(statistics['NET_MAIN_INFLOW_RATIO'] > 0.07)
-                + int(statistics['MAIN_FORCE_BUY_RATIO'] > 0.6)
+                (statistics['ACCUMULATION_SIMPLE_PATTERN_COUNT'])
+                - (statistics['DISTRIBUTION_SIMPLE_PATTERN_COUNT'])
+                + statistics['WINDOW_ACCUMULATION']
+                + statistics['WINDOW_WASH']
+                - statistics['WINDOW_DISTRIBUTION']
+                + math.ceil(statistics['MAIN_FORCE_BUY'] / 5000.0) * 3
+                - math.ceil(statistics['MAIN_FORCE_SELL'] / 5000.0) * 3
+                + math.ceil(statistics['NET_MAIN_INFLOW'] / 3000) * 4
+                + int(statistics['NET_MAIN_INFLOW_RATIO'] > 0.10) *2
+                + int(statistics['MAIN_FORCE_BUY_RATIO'] > 0.6) *2
                 + int(statistics['MAIN_FORCE_BUY_SELL_RATIO'] > 1)
                 + int(statistics['MAIN_FORCE_ACTIVITY_RATIO'] > 0.12)
-                + int(statistics['MAIN_FORCE_5MIN_ACCUMULATION']) * 2
-                + int(statistics['MAIN_FORCE_5MIN_ACCUMULATION_NEAR_SUPPORT']) * 3
+                + int(statistics['MAIN_FORCE_5MIN_ACCUMULATION'])
+                + int(statistics['MAIN_FORCE_5MIN_ACCUMULATION_NEAR_SUPPORT'])
                 + int(statistics['LIKELY_MEDIUM_SPLIT_BUY']) * 2
-                + int(statistics['MAIN_FORCE_MEDIUM_STEALTH_ACCUMULATION'])*2
+                + int(statistics['MAIN_FORCE_MEDIUM_STEALTH_ACCUMULATION']) * 2
         )
         statistics['SCORE'] = score
         return statistics
@@ -359,13 +379,14 @@ class MainForcePatterns:
         """识别吸筹模式"""
         # 条件：连续大单买入 + 价格震荡或微跌
         amount_sum = df_window['AMOUNT_WAN'].sum()
-        buy_strength = (df_window['LARGE_BUY'].sum() + df_window['HUGE_BUY'].sum()) / (1 if amount_sum == 0 else amount_sum)
+        buy_strength = (df_window['LARGE_BUY'].sum() + df_window['HUGE_BUY'].sum()) / (
+            1 if amount_sum == 0 else amount_sum)
         # 变异系数。用于判断序列的波动率。越小说明越稳定
         price_volatility = df_window['PRICE'].std() / df_window['PRICE'].mean()
         return buy_strength > 0.3 and price_volatility < 0.02
 
     @staticmethod
-    def identify_aggregate_accumulation_features(df_tick, df_aggregated, rolling_window:int=20):
+    def identify_aggregate_accumulation_features(df_tick, df_aggregated, rolling_window: int = 20):
         """
         识别主力吸筹特征
         """
@@ -376,10 +397,11 @@ class MainForcePatterns:
         )
 
         # 2. 密集大单买入出现在支撑位
-        df_aggregated['SUPPORT_LEVEL'] = df_aggregated['PRICE'].rolling(rolling_window).min() #用于计算时间序列中每个数据点前20个观测值（包括自身）内的最小值，也称为滚动最小值或移动最小值
+        df_aggregated['SUPPORT_LEVEL'] = df_aggregated['PRICE'].rolling(
+            rolling_window).min()  # 用于计算时间序列中每个数据点前20个观测值（包括自身）内的最小值，也称为滚动最小值或移动最小值
         df_aggregated['NEAR_SUPPORT'] = (
                 (df_aggregated['PRICE'] - df_aggregated['SUPPORT_LEVEL']) / df_aggregated['SUPPORT_LEVEL'] < 0.02
-        ) # 判断是否在支撑位附近
+        )  # 判断是否在支撑位附近
         df_aggregated['ACCUMULATION_SIGNAL_2'] = (
                 (df_aggregated['MAIN_FORCE_BUY_RATIO'] > 0.7).astype(bool) &
                 df_aggregated['NEAR_SUPPORT']
@@ -387,9 +409,9 @@ class MainForcePatterns:
 
         # 3. 大单拆分特征（连续小单买入）
         # 识别连续买入序列
-        #.diff()：计算相邻行的差值
-        #!= 0：判断是否发生变化（0→1或1→0）
-        #.cumsum()：累积求和，为每个连续序列分配唯一分组编号
+        # .diff()：计算相邻行的差值
+        # != 0：判断是否发生变化（0→1或1→0）
+        # .cumsum()：累积求和，为每个连续序列分配唯一分组编号
         df_tick['BUY_SEQUENCE'] = (df_tick['DIRECTION'] == 'B').astype(int)
         df_tick['BUY_GROUP'] = (df_tick['BUY_SEQUENCE'].diff() != 0).cumsum()
 
@@ -404,7 +426,7 @@ class MainForcePatterns:
         buy_groups['LIKELY_MEDIUM_SPLIT_BUY'] = (
                 (buy_groups['VOLUME_COUNT'] >= 3) &
                 (buy_groups['AVG_VOLUME'] > df_tick['VOLUME'].quantile(0.6)) &
-                (buy_groups['AVG_VOLUME'] < df_tick['VOLUME'].quantile(0.8)) # 划分成交量的大小
+                (buy_groups['AVG_VOLUME'] < df_tick['VOLUME'].quantile(0.8))  # 划分成交量的大小
         )
         return df_aggregated, buy_groups
 
@@ -413,9 +435,13 @@ class MainForcePatterns:
         """识别洗盘模式"""
         # 条件：大单打压 + 快速收回
         max_drawdown = (df_window['PRICE'].max() - df_window['PRICE'].min()) / df_window['PRICE'].max()
-        is_drawdown_recovery = (df_window["PRICE"].iloc[0] >= df_window['PRICE'].min() and df_window["PRICE"].iloc[0] <= df_window['PRICE'].max())
-        recovery_time = (df_window[df_window['PRICE'] == df_window['PRICE'].max()]["TIME"].astype('int64').iloc[-1] // 10**9 -
-                         df_window[df_window['PRICE'] == df_window['PRICE'].min()]["TIME"].astype('int64').iloc[0] // 10**9) / 60  # 恢复时间
+        is_drawdown_recovery = (
+                    df_window["PRICE"].iloc[0] >= df_window['PRICE'].min() and df_window["PRICE"].iloc[0] <= df_window[
+                'PRICE'].max())
+        recovery_time = (df_window[df_window['PRICE'] == df_window['PRICE'].max()]["TIME"].astype('int64').iloc[
+                             -1] // 10 ** 9 -
+                         df_window[df_window['PRICE'] == df_window['PRICE'].min()]["TIME"].astype('int64').iloc[
+                             0] // 10 ** 9) / 60  # 恢复时间
         # 主力净流入超过50万
         main_force_in = df_window['NET_MAIN_INFLOW'].sum() >= 0
         # 2分钟之内价格从下跌2% 并且短时间内恢复
@@ -426,7 +452,8 @@ class MainForcePatterns:
         """识别出货模式"""
         # 条件：价格上涨 + 大单卖出
         price_increase = (df_window['PRICE'].iloc[-1] - df_window['PRICE'].iloc[0]) / df_window['PRICE'].iloc[0]
-        sell_pressure = MainForcePatterns.safe_divide(df_window['LARGE_SELL'].sum() + df_window['HUGE_SELL'].sum(), df_window['AMOUNT_WAN'].sum())
+        sell_pressure = MainForcePatterns.safe_divide(df_window['LARGE_SELL'].sum() + df_window['HUGE_SELL'].sum(),
+                                                      df_window['AMOUNT_WAN'].sum())
         return price_increase > 0.01 and sell_pressure > 0.4
 
     @staticmethod
@@ -437,7 +464,8 @@ class MainForcePatterns:
         return numerator / denominator
 
 
-def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_save: bool = False, date_str:str='2025-09-30'):
+def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_save: bool = False,
+                   date_str: str = '2025-09-30'):
     ts.set_token("5b03bbe59725c145f229d4eb7fe73d8fc9dc98d9cde5e194a0e4d708")
     print(f"获取到了 {symbol}  {stocks.shape[0]}  只股票")
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -445,7 +473,8 @@ def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_
         'CODE', 'NAME', 'SCORE', 'ACCUMULATION_SIMPLE_PATTERN_COUNT', 'DISTRIBUTION_SIMPLE_PATTERN_COUNT',
         'WINDOW_ACCUMULATION', 'WINDOW_WASH', 'WINDOW_DISTRIBUTION', 'MAIN_FORCE_BUY',
         'MAIN_FORCE_SELL', 'NET_MAIN_INFLOW', 'NET_MAIN_INFLOW_RATIO', 'MAIN_FORCE_BUY_RATIO',
-        'MAIN_FORCE_BUY_SELL_RATIO', 'MAIN_FORCE_ACTIVITY_RATIO', 'MAIN_FORCE_5MIN_ACCUMULATION', 'MAIN_FORCE_5MIN_ACCUMULATION_NEAR_SUPPORT',
+        'MAIN_FORCE_BUY_SELL_RATIO', 'MAIN_FORCE_ACTIVITY_RATIO', 'MAIN_FORCE_5MIN_ACCUMULATION',
+        'MAIN_FORCE_5MIN_ACCUMULATION_NEAR_SUPPORT',
         'LIKELY_MEDIUM_SPLIT_BUY', 'MAIN_FORCE_MEDIUM_STEALTH_ACCUMULATION'
     ])
 
@@ -466,13 +495,14 @@ def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_
                         os.makedirs(tick_data_path)  # 递归创建目录（包括父目录）
                     df.to_csv(f'{tick_data_path}/{row["证券代码"]}_{symbol}_{row["证券简称"]}.csv')
                 else:
-                    df = pd.read_csv(f'{current_dir}/data/{symbol}/{date_str}/{str(row["证券代码"]).zfill(6)}_{symbol}_{row["证券简称"]}.csv')
+                    df = pd.read_csv(
+                        f'{current_dir}/data/{symbol}/{date_str}/{str(row["证券代码"]).zfill(6)}_{symbol}_{row["证券简称"]}.csv')
 
                 analyzer = MainForceAnalyzer(df)
                 statistics = analyzer.analyze_main_force_activity()
                 statistics = MainForceAnalyzer.comprehensive_scoring(statistics)
 
-                statistics['CODE'] =  row["证券代码"]
+                statistics['CODE'] = row["证券代码"]
                 statistics['NAME'] = row["证券简称"]
                 res_df.loc[len(res_df)] = statistics
                 if index % 1000 == 0:
@@ -487,7 +517,7 @@ def analyze_stocks(stocks: pd.DataFrame, file: TextIOWrapper, symbol: str, need_
 
 def get_stock_name_code(path: str, symbol: str) -> pd.DataFrame:
     if path is not None and path.strip() != "":
-        file_list = [entry.name.replace("_",",") for entry in os.scandir(path) if entry.is_file()]
+        file_list = [entry.name.replace("_", ",") for entry in os.scandir(path) if entry.is_file()]
         file_list = [entry.replace(".", ",") for entry in file_list]
         # 示例数据：字符串列表（每行是逗号分隔的值）
         header = "证券代码,symbol,证券简称,file_type"
@@ -510,7 +540,7 @@ def get_stock_name_code(path: str, symbol: str) -> pd.DataFrame:
     return None
 
 
-def analyze_tick_data(date_str:str, need_save:bool=False,) -> pd.DataFrame:
+def analyze_tick_data(date_str: str, need_save: bool = False, ) -> pd.DataFrame:
     """
     沪深京 A 股列表
     :return: 沪深京 A 股数据
@@ -521,7 +551,7 @@ def analyze_tick_data(date_str:str, need_save:bool=False,) -> pd.DataFrame:
         # # 分析上证
         if not need_save:
             stock_sh = get_stock_name_code(f"{current_dir}/data/SH/{date_str}", "SH")
-            analyze_stocks(stock_sh, f, symbol="SH", need_save=False)
+            analyze_stocks(stock_sh, f, symbol="SH", need_save=False, date_str=date_str)
         else:
             # 分析上证
             stock_sh = get_stock_name_code(None, "SH")
@@ -531,7 +561,7 @@ def analyze_tick_data(date_str:str, need_save:bool=False,) -> pd.DataFrame:
         if not need_save:
             # 分析深圳
             stock_sz = get_stock_name_code(f"{current_dir}/data/SZ/{date_str}", "SZ")
-            analyze_stocks(stock_sz, f, symbol="SZ", need_save=False)
+            analyze_stocks(stock_sz, f, symbol="SZ", need_save=False, date_str=date_str)
         else:
             # 分析深圳
             stock_sz = get_stock_name_code(None, "SZ")
@@ -551,5 +581,6 @@ def analyze_tick_data(date_str:str, need_save:bool=False,) -> pd.DataFrame:
     # big_df = pd.concat(objs=[big_df, stock_bse], ignore_index=True)
     # big_df.columns = ["code", "name"]
 
+
 if __name__ == '__main__':
-    analyze_tick_data('2025-09-30',True)
+    analyze_tick_data('2025-10-08', False)
