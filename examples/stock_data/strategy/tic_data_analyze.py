@@ -590,4 +590,4 @@ def analyze_tick_data(date_str: str, need_save: bool = False, ) -> pd.DataFrame:
 
 
 if __name__ == '__main__':
-    analyze_tick_data('2025-10-08', False)
+    analyze_tick_data('2025-10-09', True)
