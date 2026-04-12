@@ -14,6 +14,6 @@ def analyze_output_data(file_path:str):
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    analyze_output_data(f"{current_dir}/result/2025-10-08_output_sh.csv")
-    analyze_output_data(f"{current_dir}/result/2025-10-08_output_sz.csv")
+    analyze_output_data(f"{current_dir}/result/2025-10-09_output_sh.csv")
+    analyze_output_data(f"{current_dir}/result/2025-10-09_output_sz.csv")
 
